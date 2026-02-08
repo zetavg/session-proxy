@@ -1,6 +1,6 @@
 {
   "name": "session-proxy",
-  "version": "1.0.0",
+  "version": "0.0.1",
   "type": "module",
   "description": "A local HTTP proxy that reuses browser session state for authenticated requests.",
   "bin": {
