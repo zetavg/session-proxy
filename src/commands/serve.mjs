@@ -1,7 +1,7 @@
 import http from 'node:http';
 import https from 'node:https';
 import { defineCommand } from 'citty';
-import { resolveSessionsDir, resolvePort } from '../lib/config.mjs';
+import { resolveSessionsDir, resolvePort, resolveHost } from '../lib/config.mjs';
 import { resolveSessionPath, loadSession, persistContextSession, buildCookieHeader } from '../lib/session.mjs';
 import { launchBrowser, createContext } from '../lib/browser.mjs';
 
@@ -11,10 +11,15 @@ export default defineCommand({
     description: 'Start the proxy server for authenticated requests using stored sessions.',
   },
   args: {
+    host: {
+      type: 'string',
+      alias: 'H',
+      description: 'Address to listen on. Default: 127.0.0.1.',
+    },
     port: {
       type: 'string',
       alias: 'p',
-      description: 'Port to bind the HTTP server to. Default: 8080.',
+      description: 'Port to bind the HTTP server to. Default: 8020.',
     },
     'sessions-dir': {
       type: 'string',
@@ -23,6 +28,7 @@ export default defineCommand({
   },
   async run({ args }) {
     const sessionsDir = resolveSessionsDir(args['sessions-dir']);
+    const host = resolveHost(args.host);
     const port = resolvePort(args.port);
 
     console.log(`📂 Sessions directory: ${sessionsDir}`);
@@ -134,9 +140,10 @@ export default defineCommand({
       }
     });
 
-    server.listen(port, () => {
-      console.log(`🚀 Session proxy listening on http://localhost:${port}`);
-      console.log(`   Example: curl "http://localhost:${port}/v1?session=example&url=https%3A%2F%2Fexample.com"`);
+    server.listen(port, host, () => {
+      const displayHost = host === '0.0.0.0' ? 'localhost' : host;
+      console.log(`🚀 Session proxy listening on http://${displayHost}:${port}`);
+      console.log(`   Example: curl "http://${displayHost}:${port}/v1?session=example&url=https%3A%2F%2Fexample.com"`);
     });
 
     // Graceful shutdown

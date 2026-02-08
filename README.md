@@ -75,11 +75,12 @@ session-proxy init --session <name_or_path> --url <login_url> [--sessions-dir <p
 Starts the proxy server.
 
 ```
-session-proxy serve [--port <port>] [--sessions-dir <path>]
+session-proxy serve [--host <address>] [--port <port>] [--sessions-dir <path>]
 ```
 
 | Flag | Alias | Default | Description |
 | --- | --- | --- | --- |
+| `--host` | `-H` | `127.0.0.1` | Address to listen on. Use `0.0.0.0` to listen on all interfaces. |
 | `--port` | `-p` | `8020` | Port to bind the HTTP server to. |
 | `--sessions-dir` | | *(see below)* | Path to the sessions directory. |
 
@@ -130,6 +131,7 @@ All CLI parameters fall back to environment variables when not explicitly provid
 | Variable | Corresponds to | Default |
 | --- | --- | --- |
 | `SESSION_PROXY_SESSIONS_DIR` | `--sessions-dir` | `$XDG_STATE_HOME/session-proxy/sessions` |
+| `SESSION_PROXY_HOST` | `--host` | `127.0.0.1` |
 | `SESSION_PROXY_PORT` | `--port` | `8020` |
 
 Resolution order: CLI flag → environment variable → built-in default.

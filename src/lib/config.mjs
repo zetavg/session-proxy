@@ -39,6 +39,20 @@ export function resolveSessionsDir(cliValue) {
 }
 
 /**
+ * Resolve the host/address for the proxy server to listen on.
+ *
+ * @param {string} [cliValue] - Value passed via --host flag.
+ * @returns {string}
+ */
+export function resolveHost(cliValue) {
+  return resolveParam({
+    cli: cliValue,
+    env: 'SESSION_PROXY_HOST',
+    fallback: '127.0.0.1',
+  });
+}
+
+/**
  * Resolve the port for the proxy server.
  *
  * @param {string|number} [cliValue] - Value passed via --port flag.
