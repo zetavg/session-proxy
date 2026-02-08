@@ -1,4 +1,6 @@
 import http from 'node:http';
+import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import { defineCommand } from 'citty';
 import { resolveSessionsDir, resolvePort } from '../lib/config.mjs';
 import { resolveSessionPath, loadSession, persistContextSession } from '../lib/session.mjs';
@@ -85,16 +87,18 @@ export default defineCommand({
           await persistContextSession(context, sessionPath);
 
           if (result.type === 'download') {
-            // Stream the downloaded file back
+            // Wait for the download to complete and get the temp file path
             const { download } = result;
-            const readable = await download.createReadStream();
+            const tempPath = await download.path();
             const suggestedName = download.suggestedFilename();
+            const { size } = await fsp.stat(tempPath);
 
             res.writeHead(200, {
               'Content-Type': 'application/octet-stream',
               'Content-Disposition': `attachment; filename="${suggestedName}"`,
+              'Content-Length': size,
             });
-            readable.pipe(res);
+            fs.createReadStream(tempPath).pipe(res);
           } else {
             // Return rendered HTML content
             const contentType = result.contentType || 'text/html; charset=utf-8';
@@ -151,21 +155,40 @@ export default defineCommand({
  */
 async function handleRequest(page, url) {
   // Set up a download listener before navigation
+  /** @type {import('playwright').Download | null} */
+  let download = null;
   const downloadPromise = new Promise((resolve) => {
-    page.once('download', (download) => resolve(download));
+    page.once('download', (d) => {
+      download = d;
+      resolve(d);
+    });
   });
 
-  // Race between page load and download
-  const navigationPromise = page.goto(url, { waitUntil: 'networkidle', timeout: 60000 });
+  // Navigate — this may throw ERR_ABORTED if the response triggers a download
+  let response = null;
+  try {
+    response = await Promise.race([
+      page.goto(url, { waitUntil: 'networkidle', timeout: 60000 }),
+      downloadPromise.then(() => null), // resolve navigation race if download starts
+    ]);
+  } catch (err) {
+    // If navigation was aborted due to a download, wait for it
+    if (!download) {
+      // Give the download event a moment to fire
+      await Promise.race([
+        downloadPromise,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(err), 5000),
+        ),
+      ]);
+    }
+  }
 
-  const result = await Promise.race([
-    downloadPromise.then((download) => ({ type: 'download', download })),
-    navigationPromise.then(async (response) => {
-      const contentType = response?.headerValue('content-type');
-      const body = await page.content();
-      return { type: 'page', body, contentType: await contentType };
-    }),
-  ]);
+  if (download) {
+    return { type: 'download', download };
+  }
 
-  return result;
+  const contentType = await response?.headerValue('content-type');
+  const body = await page.content();
+  return { type: 'page', body, contentType };
 }
