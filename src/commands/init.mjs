@@ -40,31 +40,41 @@ export default defineCommand({
     console.log(`🌐 Opened: ${args.url}`);
     console.log('👤 Please log in manually. Close the browser window when done.');
 
-    // Periodically persist session state so we capture the latest state
-    // even if the browser is abruptly closed.
-    const saveInterval = setInterval(async () => {
-      try {
-        await persistContextSession(context, sessionPath);
-      } catch {
-        // Context may already be closed — ignore.
-      }
-    }, 3000);
+    // Track open pages. When the user closes the last tab/window,
+    // the context is still alive so we can reliably capture state,
+    // then close the browser ourselves.
+    const pages = new Set(context.pages());
 
-    // Wait until the browser is closed by the user
+    context.on('page', (p) => {
+      pages.add(p);
+      p.on('close', () => pages.delete(p));
+    });
+    page.on('close', () => pages.delete(page));
+
     await new Promise((resolve) => {
+      const onPageClose = async () => {
+        if (pages.size > 0) return;
+
+        // All tabs closed — save session while context is still alive
+        try {
+          await persistContextSession(context, sessionPath);
+          console.log(`✅ Session saved to: ${sessionPath}`);
+        } catch (err) {
+          console.error('❌ Failed to save session:', err.message || err);
+        }
+
+        await browser.close();
+        resolve();
+      };
+
+      // Listen for close on the initial page and any future pages
+      page.on('close', onPageClose);
+      context.on('page', (p) => {
+        p.on('close', onPageClose);
+      });
+
+      // Also resolve if the browser is closed externally (e.g. killed)
       browser.on('disconnected', resolve);
     });
-
-    clearInterval(saveInterval);
-
-    // Final save attempt (may fail if already disconnected, which is fine
-    // because the interval will have captured a recent state).
-    try {
-      await persistContextSession(context, sessionPath);
-    } catch {
-      // Already disconnected — the last interval save is our best state.
-    }
-
-    console.log(`✅ Session saved to: ${sessionPath}`);
   },
 });
