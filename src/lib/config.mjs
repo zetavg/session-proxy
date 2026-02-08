@@ -48,7 +48,7 @@ export function resolvePort(cliValue) {
   const raw = resolveParam({
     cli: cliValue !== undefined && cliValue !== null ? String(cliValue) : undefined,
     env: 'SESSION_PROXY_PORT',
-    fallback: '8080',
+    fallback: '8020',
   });
   const port = Number.parseInt(raw, 10);
   if (Number.isNaN(port) || port < 0 || port > 65535) {
