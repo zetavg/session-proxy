@@ -59,3 +59,48 @@ export async function persistContextSession(context, sessionPath) {
   await fs.mkdir(path.dirname(sessionPath), { recursive: true });
   await context.storageState({ path: sessionPath });
 }
+
+/**
+ * Build a Cookie header string from session state for a given URL.
+ *
+ * Filters cookies by domain/path matching against the target URL.
+ *
+ * @param {object} state - Playwright storageState object.
+ * @param {string} targetUrl - The URL to match cookies against.
+ * @returns {string} Cookie header value (e.g. "name1=val1; name2=val2").
+ */
+export function buildCookieHeader(state, targetUrl) {
+  if (!state.cookies || state.cookies.length === 0) return '';
+
+  const url = new URL(targetUrl);
+  const hostname = url.hostname;
+  const pathname = url.pathname;
+
+  const matched = state.cookies.filter((c) => {
+    // Domain matching: cookie domain ".example.com" matches "sub.example.com"
+    const cookieDomain = c.domain.startsWith('.') ? c.domain : `.${c.domain}`;
+    const hostDomain = `.${hostname}`;
+    if (!hostDomain.endsWith(cookieDomain) && hostDomain !== cookieDomain) {
+      return false;
+    }
+
+    // Path matching
+    if (c.path && !pathname.startsWith(c.path)) {
+      return false;
+    }
+
+    // Secure flag
+    if (c.secure && url.protocol !== 'https:') {
+      return false;
+    }
+
+    // Expiry check
+    if (c.expires && c.expires > 0 && c.expires < Date.now() / 1000) {
+      return false;
+    }
+
+    return true;
+  });
+
+  return matched.map((c) => `${c.name}=${c.value}`).join('; ');
+}

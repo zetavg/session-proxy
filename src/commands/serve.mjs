@@ -1,9 +1,8 @@
 import http from 'node:http';
-import fs from 'node:fs';
-import fsp from 'node:fs/promises';
+import https from 'node:https';
 import { defineCommand } from 'citty';
 import { resolveSessionsDir, resolvePort } from '../lib/config.mjs';
-import { resolveSessionPath, loadSession, persistContextSession } from '../lib/session.mjs';
+import { resolveSessionPath, loadSession, persistContextSession, buildCookieHeader } from '../lib/session.mjs';
 import { launchBrowser, createContext } from '../lib/browser.mjs';
 
 export default defineCommand({
@@ -77,34 +76,52 @@ export default defineCommand({
         const sessionPath = resolveSessionPath(sessionName, sessionsDir);
         console.log(`📥 [${sessionName}] ${targetUrl}`);
 
+        // Phase 1: Try a direct HTTP request with session cookies.
+        // This gives us real streaming — the client receives bytes as they arrive.
+        const state = await loadSession(sessionPath);
+        const cookieHeader = buildCookieHeader(state, targetUrl);
+
+        const upstreamRes = await directFetch(targetUrl, cookieHeader);
+        const contentType = upstreamRes.headers['content-type'] || '';
+        const isHtmlPage = contentType.includes('text/html');
+
+        if (!isHtmlPage) {
+          // Non-HTML (file download, JSON, etc.) — stream directly to client.
+          const headers = { ...upstreamRes.headers };
+
+          // Forward Content-Disposition if present, otherwise synthesize one
+          // for non-text responses to signal a file download.
+          if (!headers['content-disposition'] && !contentType.startsWith('text/')) {
+            const filename = filenameFromUrl(targetUrl);
+            headers['content-disposition'] = `attachment; filename="${filename}"`;
+          }
+
+          res.writeHead(upstreamRes.statusCode, headers);
+          upstreamRes.pipe(res);
+
+          // Persist any Set-Cookie headers back into the session file
+          await updateSessionCookies(state, sessionPath, upstreamRes, targetUrl);
+
+          console.log(`✅ [${sessionName}] Streamed ${targetUrl}`);
+          return;
+        }
+
+        // Phase 2: HTML page — use Playwright for full rendering.
+        // Destroy the direct response since we won't use it.
+        upstreamRes.destroy();
+
         const context = await getContext(sessionPath);
         const page = await context.newPage();
 
         try {
-          const result = await handleRequest(page, targetUrl);
+          await page.goto(targetUrl, { waitUntil: 'networkidle', timeout: 60000 });
+          const body = await page.content();
 
-          // Persist updated session state (cookies may have been refreshed)
           await persistContextSession(context, sessionPath);
 
-          if (result.type === 'download') {
-            // Wait for the download to complete and get the temp file path
-            const { download } = result;
-            const tempPath = await download.path();
-            const suggestedName = download.suggestedFilename();
-            const { size } = await fsp.stat(tempPath);
-
-            res.writeHead(200, {
-              'Content-Type': 'application/octet-stream',
-              'Content-Disposition': `attachment; filename="${suggestedName}"`,
-              'Content-Length': size,
-            });
-            fs.createReadStream(tempPath).pipe(res);
-          } else {
-            // Return rendered HTML content
-            const contentType = result.contentType || 'text/html; charset=utf-8';
-            res.writeHead(200, { 'Content-Type': contentType });
-            res.end(result.body);
-          }
+          res.writeHead(200, { 'Content-Type': contentType || 'text/html; charset=utf-8' });
+          res.end(body);
+          console.log(`✅ [${sessionName}] Rendered ${targetUrl}`);
         } finally {
           await page.close();
         }
@@ -147,48 +164,114 @@ export default defineCommand({
 });
 
 /**
- * Navigate to a URL and determine whether it triggers a download or is a page.
+ * Perform a direct HTTP(S) GET request with cookies, returning the raw
+ * IncomingMessage response for streaming.
  *
- * @param {import('playwright').Page} page
- * @param {string} url
- * @returns {Promise<{ type: 'download', download: import('playwright').Download } | { type: 'page', body: string, contentType?: string }>}
+ * @param {string} url - Target URL.
+ * @param {string} cookieHeader - Cookie header value.
+ * @returns {Promise<import('http').IncomingMessage>}
  */
-async function handleRequest(page, url) {
-  // Set up a download listener before navigation
-  /** @type {import('playwright').Download | null} */
-  let download = null;
-  const downloadPromise = new Promise((resolve) => {
-    page.once('download', (d) => {
-      download = d;
-      resolve(d);
-    });
-  });
+function directFetch(url, cookieHeader) {
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(url);
+    const mod = parsed.protocol === 'https:' ? https : http;
 
-  // Navigate — this may throw ERR_ABORTED if the response triggers a download
-  let response = null;
+    const reqOpts = {
+      method: 'GET',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      },
+    };
+
+    const req = mod.get(url, reqOpts, (res) => {
+      // Follow redirects (3xx)
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        res.destroy();
+        const redirectUrl = new URL(res.headers.location, url).toString();
+        directFetch(redirectUrl, cookieHeader).then(resolve, reject);
+        return;
+      }
+      resolve(res);
+    });
+
+    req.on('error', reject);
+  });
+}
+
+/**
+ * Extract a reasonable filename from a URL path.
+ *
+ * @param {string} url
+ * @returns {string}
+ */
+function filenameFromUrl(url) {
   try {
-    response = await Promise.race([
-      page.goto(url, { waitUntil: 'networkidle', timeout: 60000 }),
-      downloadPromise.then(() => null), // resolve navigation race if download starts
-    ]);
-  } catch (err) {
-    // If navigation was aborted due to a download, wait for it
-    if (!download) {
-      // Give the download event a moment to fire
-      await Promise.race([
-        downloadPromise,
-        new Promise((_, reject) =>
-          setTimeout(() => reject(err), 5000),
-        ),
-      ]);
+    const pathname = new URL(url).pathname;
+    const base = pathname.split('/').pop();
+    return base || 'download';
+  } catch {
+    return 'download';
+  }
+}
+
+/**
+ * If the upstream response includes Set-Cookie headers, merge them back into
+ * the session state and persist to disk.
+ *
+ * @param {object} state - Loaded session state.
+ * @param {string} sessionPath - Path to the session file.
+ * @param {import('http').IncomingMessage} upstreamRes - The upstream HTTP response.
+ * @param {string} targetUrl - The original target URL.
+ */
+async function updateSessionCookies(state, sessionPath, upstreamRes, targetUrl) {
+  const setCookieHeaders = upstreamRes.headers['set-cookie'];
+  if (!setCookieHeaders || setCookieHeaders.length === 0) return;
+
+  const url = new URL(targetUrl);
+
+  for (const raw of setCookieHeaders) {
+    const parts = raw.split(';').map((s) => s.trim());
+    const [nameVal, ...attrs] = parts;
+    const eqIdx = nameVal.indexOf('=');
+    if (eqIdx < 0) continue;
+
+    const name = nameVal.slice(0, eqIdx);
+    const value = nameVal.slice(eqIdx + 1);
+
+    const cookie = { name, value, domain: url.hostname, path: '/' };
+
+    for (const attr of attrs) {
+      const lower = attr.toLowerCase();
+      if (lower.startsWith('domain=')) {
+        cookie.domain = attr.slice(7);
+      } else if (lower.startsWith('path=')) {
+        cookie.path = attr.slice(5);
+      } else if (lower === 'secure') {
+        cookie.secure = true;
+      } else if (lower === 'httponly') {
+        cookie.httpOnly = true;
+      } else if (lower.startsWith('expires=')) {
+        const ts = Date.parse(attr.slice(8));
+        if (!Number.isNaN(ts)) cookie.expires = ts / 1000;
+      } else if (lower.startsWith('samesite=')) {
+        cookie.sameSite = attr.slice(9);
+      }
+    }
+
+    // Replace existing cookie with same name + domain, or append
+    const idx = (state.cookies || []).findIndex(
+      (c) => c.name === cookie.name && c.domain === cookie.domain && c.path === cookie.path,
+    );
+    if (!state.cookies) state.cookies = [];
+    if (idx >= 0) {
+      state.cookies[idx] = cookie;
+    } else {
+      state.cookies.push(cookie);
     }
   }
 
-  if (download) {
-    return { type: 'download', download };
-  }
-
-  const contentType = await response?.headerValue('content-type');
-  const body = await page.content();
-  return { type: 'page', body, contentType };
+  // Persist updated state
+  const { saveSession } = await import('../lib/session.mjs');
+  await saveSession(sessionPath, state);
 }
