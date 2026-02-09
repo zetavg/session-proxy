@@ -53,6 +53,21 @@ export function resolveHost(cliValue) {
 }
 
 /**
+ * Resolve the API key for proxy authentication.
+ *
+ * @param {string} [cliValue] - Value passed via --api-key flag.
+ * @returns {string|undefined} The API key, or undefined if not set.
+ */
+export function resolveApiKey(cliValue) {
+  const key = resolveParam({
+    cli: cliValue,
+    env: 'SESSION_PROXY_API_KEY',
+    fallback: '',
+  });
+  return key || undefined;
+}
+
+/**
  * Resolve the port for the proxy server.
  *
  * @param {string|number} [cliValue] - Value passed via --port flag.

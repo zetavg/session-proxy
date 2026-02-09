@@ -32,6 +32,9 @@ A browser window opens. Log in as you normally would, then close the browser. Th
 
 ```bash
 session-proxy serve
+
+# Or with API key authentication (recommended)
+session-proxy serve --api-key my-secret-key
 ```
 
 **3. Fetch protected resources** using any HTTP client:
@@ -42,6 +45,10 @@ wget "http://localhost:8020/v1?session=my-site&url=https%3A%2F%2Fexample.com%2Fp
 
 # Retrieve a page
 curl "http://localhost:8020/v1?session=my-site&url=https%3A%2F%2Fexample.com%2Fdashboard"
+
+# If --api-key is set, include the Authorization header
+curl -H "Authorization: Bearer my-secret-key" \
+  "http://localhost:8020/v1?session=my-site&url=https%3A%2F%2Fexample.com%2Fdashboard"
 ```
 
 > [!TIP]
@@ -60,7 +67,7 @@ session-proxy init --session <name_or_path> --url <login_url> [--sessions-dir <p
 
 | Flag | Alias | Description |
 | --- | --- | --- |
-| `--session` | `-s` | Name or path of the session file to create. |
+| `--session` | `-s` | Name or relative path of the session file to create (resolved within the sessions directory). |
 | `--url` | `-u` | Login URL to open in the browser. |
 | `--sessions-dir` | | Path to the sessions directory. |
 
@@ -75,13 +82,14 @@ session-proxy init --session <name_or_path> --url <login_url> [--sessions-dir <p
 Starts the proxy server.
 
 ```
-session-proxy serve [--host <address>] [--port <port>] [--sessions-dir <path>]
+session-proxy serve [--host <address>] [--port <port>] [--api-key <key>] [--sessions-dir <path>]
 ```
 
 | Flag | Alias | Default | Description |
 | --- | --- | --- | --- |
-| `--host` | `-H` | `127.0.0.1` | Address to listen on. Use `0.0.0.0` to listen on all interfaces. |
+| `--host` | `-H` | `127.0.0.1` | Address to listen on. Use `0.0.0.0` to listen on all interfaces. ⚠️ Binding to a non-loopback interface exposes the proxy to the network — use `--api-key` to require authentication. |
 | `--port` | `-p` | `8020` | Port to bind the HTTP server to. |
+| `--api-key` | `-k` | *(none)* | Require an API key for all requests. Clients must send an `Authorization: Bearer <key>` header. Strongly recommended when listening on non-loopback interfaces. |
 | `--sessions-dir` | | *(see below)* | Path to the sessions directory. |
 
 ### Proxy Endpoint
@@ -92,7 +100,7 @@ GET /v1?session=<name>&url=<encoded_url>
 
 | Parameter | Description |
 | --- | --- |
-| `session` | Session file name (resolved relative to the sessions directory) or absolute path. |
+| `session` | Session file name or relative path (resolved relative to the sessions directory). Absolute paths are not allowed. |
 | `url` | URL-encoded target URL to fetch. |
 
 **Behavior:**
@@ -122,7 +130,8 @@ The `--session` / `session` parameter can be:
 
 - **A bare name** — resolved relative to the sessions directory with `.json` appended (e.g., `my-site` → `~/.local/state/session-proxy/sessions/my-site.json`).
 - **A relative path** — resolved relative to the sessions directory.
-- **An absolute path** — used as-is.
+
+Absolute paths and path traversal beyond the sessions directory (e.g., `../../../etc/passwd`) are rejected.
 
 ### Environment Variables
 
@@ -133,5 +142,6 @@ All CLI parameters fall back to environment variables when not explicitly provid
 | `SESSION_PROXY_SESSIONS_DIR` | `--sessions-dir` | `$XDG_STATE_HOME/session-proxy/sessions` |
 | `SESSION_PROXY_HOST` | `--host` | `127.0.0.1` |
 | `SESSION_PROXY_PORT` | `--port` | `8020` |
+| `SESSION_PROXY_API_KEY` | `--api-key` | *(none — no authentication)* |
 
 Resolution order: CLI flag → environment variable → built-in default.

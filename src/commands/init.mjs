@@ -12,7 +12,7 @@ export default defineCommand({
     session: {
       type: 'string',
       alias: 's',
-      description: 'Name or path of the session file to create or overwrite.',
+      description: 'Name or relative path of the session file to create or overwrite (resolved within the sessions directory).',
       required: true,
     },
     url: {

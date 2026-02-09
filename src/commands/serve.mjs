@@ -1,7 +1,7 @@
 import http from 'node:http';
 import https from 'node:https';
 import { defineCommand } from 'citty';
-import { resolveSessionsDir, resolvePort, resolveHost } from '../lib/config.mjs';
+import { resolveSessionsDir, resolvePort, resolveHost, resolveApiKey } from '../lib/config.mjs';
 import { resolveSessionPath, loadSession, persistContextSession, buildCookieHeader } from '../lib/session.mjs';
 import { launchBrowser, createContext } from '../lib/browser.mjs';
 
@@ -14,12 +14,17 @@ export default defineCommand({
     host: {
       type: 'string',
       alias: 'H',
-      description: 'Address to listen on. Default: 127.0.0.1.',
+      description: 'Address to listen on. Default: 127.0.0.1. WARNING: Binding to 0.0.0.0 or a public interface exposes the proxy to the network — use --api-key to require authentication.',
     },
     port: {
       type: 'string',
       alias: 'p',
       description: 'Port to bind the HTTP server to. Default: 8020.',
+    },
+    'api-key': {
+      type: 'string',
+      alias: 'k',
+      description: 'Require an API key for all requests. Clients must send an Authorization: Bearer <key> header. Strongly recommended when listening on non-loopback interfaces.',
     },
     'sessions-dir': {
       type: 'string',
@@ -30,8 +35,14 @@ export default defineCommand({
     const sessionsDir = resolveSessionsDir(args['sessions-dir']);
     const host = resolveHost(args.host);
     const port = resolvePort(args.port);
+    const apiKey = resolveApiKey(args['api-key']);
 
     console.log(`📂 Sessions directory: ${sessionsDir}`);
+    if (apiKey) {
+      console.log('🔑 API key authentication enabled.');
+    } else if (host !== '127.0.0.1' && host !== 'localhost' && host !== '::1') {
+      console.warn('⚠️  WARNING: Listening on a non-loopback interface without --api-key. The proxy is accessible to anyone on the network!');
+    }
 
     // Browser instance shared across requests
     const browser = await launchBrowser();
@@ -61,6 +72,17 @@ export default defineCommand({
 
     const server = http.createServer(async (req, res) => {
       try {
+        // API key authentication
+        if (apiKey) {
+          const authHeader = req.headers['authorization'] || '';
+          const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+          if (token !== apiKey) {
+            res.writeHead(403, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Forbidden. Invalid or missing API key.' }));
+            return;
+          }
+        }
+
         const reqUrl = new URL(req.url, `http://localhost:${port}`);
 
         // Only handle /v1 endpoint
@@ -176,9 +198,10 @@ export default defineCommand({
  *
  * @param {string} url - Target URL.
  * @param {string} cookieHeader - Cookie header value.
+ * @param {number} [maxRedirects=10] - Maximum number of redirects to follow.
  * @returns {Promise<import('http').IncomingMessage>}
  */
-function directFetch(url, cookieHeader) {
+function directFetch(url, cookieHeader, maxRedirects = 10) {
   return new Promise((resolve, reject) => {
     const parsed = new URL(url);
     const mod = parsed.protocol === 'https:' ? https : http;
@@ -195,8 +218,12 @@ function directFetch(url, cookieHeader) {
       // Follow redirects (3xx)
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         res.destroy();
+        if (maxRedirects <= 0) {
+          reject(new Error(`Too many redirects (last URL: ${url})`));
+          return;
+        }
         const redirectUrl = new URL(res.headers.location, url).toString();
-        directFetch(redirectUrl, cookieHeader).then(resolve, reject);
+        directFetch(redirectUrl, cookieHeader, maxRedirects - 1).then(resolve, reject);
         return;
       }
       resolve(res);
@@ -207,16 +234,20 @@ function directFetch(url, cookieHeader) {
 }
 
 /**
- * Extract a reasonable filename from a URL path.
+ * Extract a reasonable filename from a URL path and sanitize it for use
+ * in a Content-Disposition header. Removes path separators, control
+ * characters, and characters that could break the header syntax.
  *
  * @param {string} url
  * @returns {string}
  */
 function filenameFromUrl(url) {
   try {
-    const pathname = new URL(url).pathname;
-    const base = pathname.split('/').pop();
-    return base || 'download';
+    const pathname = decodeURIComponent(new URL(url).pathname);
+    const base = pathname.split('/').pop() || 'download';
+    // Strip control characters, quotes, backslashes, and semicolons
+    const sanitized = base.replace(/[\x00-\x1f\x7f"\\;]/g, '_').trim();
+    return sanitized || 'download';
   } catch {
     return 'download';
   }
