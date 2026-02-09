@@ -51,6 +51,23 @@ export default defineCommand({
     /** @type {Map<string, import('playwright').BrowserContext>} */
     const contextCache = new Map();
 
+    // Track in-flight requests for graceful shutdown
+    let shuttingDown = false;
+    let activeRequests = 0;
+    /** @type {(() => void) | null} */
+    let onDrained = null;
+
+    function trackRequestStart() {
+      activeRequests++;
+    }
+
+    function trackRequestEnd() {
+      activeRequests--;
+      if (shuttingDown && activeRequests === 0 && onDrained) {
+        onDrained();
+      }
+    }
+
     /**
      * Get or create a browser context for the given session.
      * @param {string} sessionPath
@@ -71,6 +88,13 @@ export default defineCommand({
     }
 
     const server = http.createServer(async (req, res) => {
+      if (shuttingDown) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Server is shutting down.' }));
+        return;
+      }
+
+      trackRequestStart();
       try {
         // API key authentication
         if (apiKey) {
@@ -159,6 +183,8 @@ export default defineCommand({
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: err.message || 'Internal server error' }));
         }
+      } finally {
+        trackRequestEnd();
       }
     });
 
@@ -170,17 +196,37 @@ export default defineCommand({
 
     // Graceful shutdown
     const shutdown = async () => {
+      if (shuttingDown) return; // Prevent double-shutdown
+      shuttingDown = true;
       console.log('\n🛑 Shutting down...');
+
+      // Stop accepting new connections
       server.close();
+
+      // Wait for in-flight requests to complete (with a timeout)
+      if (activeRequests > 0) {
+        console.log(`⏳ Waiting for ${activeRequests} in-flight request(s) to complete...`);
+        await Promise.race([
+          new Promise((resolve) => { onDrained = resolve; }),
+          new Promise((resolve) => setTimeout(() => {
+            console.warn(`⚠️  Timed out waiting for requests — forcing shutdown.`);
+            resolve();
+          }, 30000)),
+        ]);
+      }
+
+      // Persist all cached sessions and close contexts
       for (const [sessionPath, context] of contextCache) {
         try {
           await persistContextSession(context, sessionPath);
+          console.log(`💾 Saved session: ${sessionPath}`);
           await context.close();
-        } catch {
-          // Best-effort cleanup
+        } catch (err) {
+          console.error(`⚠️  Failed to save session ${sessionPath}:`, err.message || err);
         }
       }
       await browser.close();
+      console.log('👋 Goodbye.');
       process.exit(0);
     };
 

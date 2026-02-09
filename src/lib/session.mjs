@@ -62,14 +62,113 @@ async function ensureSafePermissions(filePath) {
  * Load session state from a file.
  * Checks and fixes file permissions if they are too permissive.
  *
+ * If the session file is corrupted or missing, this function will attempt
+ * to recover from any leftover temp files before giving up.
+ *
  * @param {string} sessionPath - Absolute path to the session file.
  * @returns {Promise<object>} Parsed session state (Playwright storageState format).
- * @throws If the file does not exist or is not valid JSON.
+ * @throws If the file does not exist or contains invalid/corrupted JSON.
  */
 export async function loadSession(sessionPath) {
   await ensureSafePermissions(sessionPath);
-  const data = await fs.readFile(sessionPath, 'utf-8');
-  return JSON.parse(data);
+
+  // Check for temp files first — if they exist, they represent a newer
+  // write that was interrupted before the atomic rename completed.
+  // A valid temp file should take priority over the main file.
+  const recovered = await recoverFromTempFiles(sessionPath);
+  if (recovered !== null) {
+    return recovered;
+  }
+
+  // No temp files (or none were valid) — load the main session file.
+  let data;
+  try {
+    data = await fs.readFile(sessionPath, 'utf-8');
+    return JSON.parse(data);
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      throw new Error(
+        `Session file not found: ${path.basename(sessionPath)}. ` +
+        `Use the "init" command to create it.`
+      );
+    }
+    throw new Error(
+      `Session file is corrupted or incomplete (${path.basename(sessionPath)}). ` +
+      `You may need to re-initialize this session with the "init" command.`
+    );
+  }
+}
+
+/**
+ * Attempt to recover a session from leftover temp files.
+ *
+ * Finds all temp files for the given session path, tries to parse each one
+ * as JSON (newest first), and if a valid one is found, promotes it to the
+ * main session file and cleans up the rest.
+ *
+ * @param {string} sessionPath - Absolute path to the session file.
+ * @returns {Promise<object|null>} Recovered session state, or null if no
+ *   valid temp file was found.
+ */
+async function recoverFromTempFiles(sessionPath) {
+  const dir = path.dirname(sessionPath);
+  const base = path.basename(sessionPath);
+  let tempFiles;
+  try {
+    const allFiles = await fs.readdir(dir);
+    tempFiles = allFiles
+      .filter((f) => f.startsWith(base + '.tmp.'))
+      .sort()
+      .reverse(); // newest first (filenames contain timestamps)
+  } catch {
+    return null; // directory doesn't exist
+  }
+
+  if (tempFiles.length === 0) return null;
+
+  for (const tmpName of tempFiles) {
+    const tmpPath = path.join(dir, tmpName);
+    try {
+      const tmpData = await fs.readFile(tmpPath, 'utf-8');
+      const parsed = JSON.parse(tmpData);
+
+      // Valid JSON — promote to main file via atomic rename.
+      await fs.rename(tmpPath, sessionPath);
+      await ensureSafePermissions(sessionPath);
+      console.warn(`♻️  Recovered session from temp file: ${tmpName}`);
+
+      // Clean up remaining temp files.
+      await cleanupTempFiles(sessionPath);
+      return parsed;
+    } catch {
+      // This temp file is also invalid — remove it and try the next one.
+      try { await fs.unlink(tmpPath); } catch { /* ignore */ }
+      console.warn(`🧹 Removed invalid temp file: ${tmpName}`);
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Remove any leftover temp files from interrupted atomic writes.
+ *
+ * @param {string} sessionPath - Absolute path to the session file.
+ */
+async function cleanupTempFiles(sessionPath) {
+  const dir = path.dirname(sessionPath);
+  const base = path.basename(sessionPath);
+  try {
+    const files = await fs.readdir(dir);
+    for (const f of files) {
+      if (f.startsWith(base + '.tmp.')) {
+        try {
+          await fs.unlink(path.join(dir, f));
+          console.warn(`🧹 Cleaned up stale temp file: ${f}`);
+        } catch { /* ignore */ }
+      }
+    }
+  } catch { /* directory may not exist yet */ }
 }
 
 /**
@@ -77,12 +176,24 @@ export async function loadSession(sessionPath) {
  * Files are written with mode 0o600 (owner-only read/write) to protect
  * sensitive session data.
  *
+ * Uses atomic write (write to temp file, then rename) to prevent
+ * incomplete/corrupted files if the process is interrupted mid-write.
+ *
  * @param {string} sessionPath - Absolute path to the session file.
  * @param {object} state - Session state to serialize.
  */
 export async function saveSession(sessionPath, state) {
-  await fs.mkdir(path.dirname(sessionPath), { recursive: true, mode: 0o700 });
-  await fs.writeFile(sessionPath, JSON.stringify(state, null, 2), { encoding: 'utf-8', mode: 0o600 });
+  const dir = path.dirname(sessionPath);
+  await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+  const tmpPath = sessionPath + `.tmp.${process.pid}.${Date.now()}`;
+  try {
+    await fs.writeFile(tmpPath, JSON.stringify(state, null, 2), { encoding: 'utf-8', mode: 0o600 });
+    await fs.rename(tmpPath, sessionPath);
+  } catch (err) {
+    // Clean up temp file on failure
+    try { await fs.unlink(tmpPath); } catch { /* ignore */ }
+    throw err;
+  }
   await ensureSafePermissions(sessionPath);
 }
 
@@ -91,12 +202,24 @@ export async function saveSession(sessionPath, state) {
  * Files are written with mode 0o600 (owner-only read/write) to protect
  * sensitive session data.
  *
+ * Uses atomic write (write to temp file, then rename) to prevent
+ * incomplete/corrupted files if the process is interrupted mid-write.
+ *
  * @param {import('playwright').BrowserContext} context - Playwright browser context.
  * @param {string} sessionPath - Absolute path to the session file.
  */
 export async function persistContextSession(context, sessionPath) {
-  await fs.mkdir(path.dirname(sessionPath), { recursive: true, mode: 0o700 });
-  await context.storageState({ path: sessionPath });
+  const dir = path.dirname(sessionPath);
+  await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+  const tmpPath = sessionPath + `.tmp.${process.pid}.${Date.now()}`;
+  try {
+    await context.storageState({ path: tmpPath });
+    await fs.rename(tmpPath, sessionPath);
+  } catch (err) {
+    // Clean up temp file on failure
+    try { await fs.unlink(tmpPath); } catch { /* ignore */ }
+    throw err;
+  }
   // Playwright writes with default permissions — ensure owner-only
   await ensureSafePermissions(sessionPath);
 }
