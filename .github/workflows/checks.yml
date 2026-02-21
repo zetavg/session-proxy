@@ -1,0 +1,46 @@
+name: Checks
+on:
+  push:
+    branches:
+      - main
+      - "**"
+    paths-ignore:
+      - "**/README.md"
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches:
+      - main
+      - develop
+    paths-ignore:
+      - "**/README.md"
+  workflow_call:
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Setup
+        uses: ./.github/actions/setup
+      - name: Lint
+        run: |
+          npm run lint
+
+  # typecheck:
+  #   name: Typecheck
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: Checkout code
+  #       uses: actions/checkout@v4
+  #     - name: Setup
+  #       uses: ./.github/actions/setup
+  #       with:
+  #         skip-build: true
+  #     - name: Build types
+  #       run: |
+  #         npm run build:types
+  #     - name: Typecheck
+  #       run: |
+  #         npm run typecheck

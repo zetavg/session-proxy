@@ -1,0 +1,78 @@
+name: Pack Package
+run-name: ${{ inputs.version && format('Pack Package - {0}', inputs.version) || 'Pack Package' }}
+on:
+  push:
+    branches:
+      - main
+      - "**"
+    paths-ignore:
+      - '**/README.md'
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches:
+      - main
+      - develop
+    paths-ignore:
+      - '**/README.md'
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+        description: 'Sets the version of package before packing. Example: `v1.0.0` or `1.2.3-pre1`.'
+    outputs:
+      version:
+        description: 'The release version of the packed package.'
+        value: ${{ jobs.pack.outputs.version }}
+      packed-package-artifact-name:
+        description: 'The name of the artifact containing the packed package, e.g. `packed-package`.'
+        value: ${{ jobs.pack.outputs.packed-package-artifact-name }}
+  workflow_dispatch:
+    inputs:
+      version:
+        required: true
+        type: string
+        description: 'Sets the version of package before packing. Example: `v1.0.0` or `1.2.3-pre1`.'
+
+jobs:
+  pack:
+    name: Pack Package
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.prepare-version.outputs.version }}
+      packed-package-artifact-name: ${{ steps.upload-packed-package.outputs.artifact-name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Setup
+        uses: ./.github/actions/setup
+      - name: Prepare package version
+        id: prepare-version
+        run: |
+          version_string="${{ inputs.version || '0.0.0' }}"
+          version="${version_string/#v/}"
+          echo "Version: ${version}"
+          echo "version=${version}" >> $GITHUB_OUTPUT
+      - name: Set package version
+        env:
+          version: ${{ steps.prepare-version.outputs.version }}
+        run: |
+          cur="$(node -p "require('./package.json').version")"
+          if [ "$cur" != "$version" ]; then
+            npm version "$version" --no-git-tag-version
+          fi
+      - name: Pack package
+        run: |
+          npm run pack-package
+      - name: Upload packed package
+        id: upload-packed-package
+        uses: actions/upload-artifact@v4.3.1
+        with:
+          name: packed-package
+          path: |
+            **/package.json
+            **/*.tgz
+            **/README.md
+            !**/node_modules
