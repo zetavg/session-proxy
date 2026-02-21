@@ -1,5 +1,5 @@
-import path from 'node:path';
 import fs from 'node:fs/promises';
+import path from 'node:path';
 
 /**
  * Resolve a session name or path to an absolute file path.
@@ -28,8 +28,13 @@ export function resolveSessionPath(nameOrPath, sessionsDir) {
   const resolved = path.resolve(sessionsDir, file);
   const normalizedDir = path.resolve(sessionsDir) + path.sep;
 
-  if (!resolved.startsWith(normalizedDir) && resolved !== path.resolve(sessionsDir)) {
-    throw new Error(`Session path escapes the sessions directory: ${nameOrPath}`);
+  if (
+    !resolved.startsWith(normalizedDir) &&
+    resolved !== path.resolve(sessionsDir)
+  ) {
+    throw new Error(
+      `Session path escapes the sessions directory: ${nameOrPath}`,
+    );
   }
 
   return resolved;
@@ -50,7 +55,9 @@ async function ensureSafePermissions(filePath) {
     const perm = stat.mode & 0o777;
     const groupOtherBits = perm & 0o077;
     if (groupOtherBits !== 0) {
-      console.warn(`⚠️  Session file ${filePath} has overly permissive mode ${perm.toString(8)} — fixing to 600.`);
+      console.warn(
+        `⚠️  Session file ${filePath} has overly permissive mode ${perm.toString(8)} — fixing to 600.`,
+      );
       await fs.chmod(filePath, 0o600);
     }
   } catch {
@@ -89,12 +96,14 @@ export async function loadSession(sessionPath) {
     if (err.code === 'ENOENT') {
       throw new Error(
         `Session file not found: ${path.basename(sessionPath)}. ` +
-        `Use the "init" command to create it.`
+          `Use the "init" command to create it.`,
+        { cause: err },
       );
     }
     throw new Error(
       `Session file is corrupted or incomplete (${path.basename(sessionPath)}). ` +
-      `You may need to re-initialize this session with the "init" command.`
+        `You may need to re-initialize this session with the "init" command.`,
+      { cause: err },
     );
   }
 }
@@ -142,7 +151,11 @@ async function recoverFromTempFiles(sessionPath) {
       return parsed;
     } catch {
       // This temp file is also invalid — remove it and try the next one.
-      try { await fs.unlink(tmpPath); } catch { /* ignore */ }
+      try {
+        await fs.unlink(tmpPath);
+      } catch {
+        /* ignore */
+      }
       console.warn(`🧹 Removed invalid temp file: ${tmpName}`);
     }
   }
@@ -165,10 +178,14 @@ async function cleanupTempFiles(sessionPath) {
         try {
           await fs.unlink(path.join(dir, f));
           console.warn(`🧹 Cleaned up stale temp file: ${f}`);
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
       }
     }
-  } catch { /* directory may not exist yet */ }
+  } catch {
+    /* directory may not exist yet */
+  }
 }
 
 /**
@@ -187,11 +204,18 @@ export async function saveSession(sessionPath, state) {
   await fs.mkdir(dir, { recursive: true, mode: 0o700 });
   const tmpPath = sessionPath + `.tmp.${process.pid}.${Date.now()}`;
   try {
-    await fs.writeFile(tmpPath, JSON.stringify(state, null, 2), { encoding: 'utf-8', mode: 0o600 });
+    await fs.writeFile(tmpPath, JSON.stringify(state, null, 2), {
+      encoding: 'utf-8',
+      mode: 0o600,
+    });
     await fs.rename(tmpPath, sessionPath);
   } catch (err) {
     // Clean up temp file on failure
-    try { await fs.unlink(tmpPath); } catch { /* ignore */ }
+    try {
+      await fs.unlink(tmpPath);
+    } catch {
+      /* ignore */
+    }
     throw err;
   }
   await ensureSafePermissions(sessionPath);
@@ -217,7 +241,11 @@ export async function persistContextSession(context, sessionPath) {
     await fs.rename(tmpPath, sessionPath);
   } catch (err) {
     // Clean up temp file on failure
-    try { await fs.unlink(tmpPath); } catch { /* ignore */ }
+    try {
+      await fs.unlink(tmpPath);
+    } catch {
+      /* ignore */
+    }
     throw err;
   }
   // Playwright writes with default permissions — ensure owner-only

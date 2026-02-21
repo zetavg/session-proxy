@@ -1,18 +1,21 @@
 import { defineCommand } from 'citty';
+
+import { createContext, launchBrowser } from '../lib/browser.mjs';
 import { resolveSessionsDir } from '../lib/config.mjs';
-import { resolveSessionPath, persistContextSession } from '../lib/session.mjs';
-import { launchBrowser, createContext } from '../lib/browser.mjs';
+import { persistContextSession, resolveSessionPath } from '../lib/session.mjs';
 
 export default defineCommand({
   meta: {
     name: 'init',
-    description: 'Initialize a session by performing an interactive browser login.',
+    description:
+      'Initialize a session by performing an interactive browser login.',
   },
   args: {
     session: {
       type: 'string',
       alias: 's',
-      description: 'Name or relative path of the session file to create or overwrite (resolved within the sessions directory).',
+      description:
+        'Name or relative path of the session file to create or overwrite (resolved within the sessions directory).',
       required: true,
     },
     url: {
@@ -38,7 +41,9 @@ export default defineCommand({
 
     await page.goto(args.url);
     console.log(`🌐 Opened: ${args.url}`);
-    console.log('👤 Please log in manually. Close the browser window when done.');
+    console.log(
+      '👤 Please log in manually. Close the browser window when done.',
+    );
 
     // Track open pages. When the user closes the last tab/window,
     // the context is still alive so we can reliably capture state,

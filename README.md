@@ -61,7 +61,7 @@ curl -H "Authorization: Bearer my-secret-key" \
 
 Initializes a session by opening an interactive browser login.
 
-```
+```bash
 session-proxy init --session <name_or_path> --url <login_url> [--sessions-dir <path>]
 ```
 
@@ -81,7 +81,7 @@ session-proxy init --session <name_or_path> --url <login_url> [--sessions-dir <p
 
 Starts the proxy server.
 
-```
+```bash
 session-proxy serve [--host <address>] [--port <port>] [--api-key <key>] [--sessions-dir <path>]
 ```
 
@@ -94,7 +94,7 @@ session-proxy serve [--host <address>] [--port <port>] [--api-key <key>] [--sess
 
 ### Proxy Endpoint
 
-```
+```http
 GET /v1?session=<name>&url=<encoded_url>
 ```
 
@@ -116,7 +116,7 @@ GET /v1?session=<name>&url=<encoded_url>
 
 Session files are stored as JSON. The default directory is:
 
-```
+```bash
 $XDG_STATE_HOME/session-proxy/sessions
 ```
 

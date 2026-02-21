@@ -1,20 +1,34 @@
 import http from 'node:http';
 import https from 'node:https';
+
 import { defineCommand } from 'citty';
-import { resolveSessionsDir, resolvePort, resolveHost, resolveApiKey } from '../lib/config.mjs';
-import { resolveSessionPath, loadSession, persistContextSession, buildCookieHeader } from '../lib/session.mjs';
-import { launchBrowser, createContext } from '../lib/browser.mjs';
+
+import { createContext, launchBrowser } from '../lib/browser.mjs';
+import {
+  resolveApiKey,
+  resolveHost,
+  resolvePort,
+  resolveSessionsDir,
+} from '../lib/config.mjs';
+import {
+  buildCookieHeader,
+  loadSession,
+  persistContextSession,
+  resolveSessionPath,
+} from '../lib/session.mjs';
 
 export default defineCommand({
   meta: {
     name: 'serve',
-    description: 'Start the proxy server for authenticated requests using stored sessions.',
+    description:
+      'Start the proxy server for authenticated requests using stored sessions.',
   },
   args: {
     host: {
       type: 'string',
       alias: 'H',
-      description: 'Address to listen on. Default: 127.0.0.1. WARNING: Binding to 0.0.0.0 or a public interface exposes the proxy to the network — use --api-key to require authentication.',
+      description:
+        'Address to listen on. Default: 127.0.0.1. WARNING: Binding to 0.0.0.0 or a public interface exposes the proxy to the network — use --api-key to require authentication.',
     },
     port: {
       type: 'string',
@@ -24,7 +38,8 @@ export default defineCommand({
     'api-key': {
       type: 'string',
       alias: 'k',
-      description: 'Require an API key for all requests. Clients must send an Authorization: Bearer <key> header. Strongly recommended when listening on non-loopback interfaces.',
+      description:
+        'Require an API key for all requests. Clients must send an Authorization: Bearer <key> header. Strongly recommended when listening on non-loopback interfaces.',
     },
     'sessions-dir': {
       type: 'string',
@@ -41,7 +56,9 @@ export default defineCommand({
     if (apiKey) {
       console.log('🔑 API key authentication enabled.');
     } else if (host !== '127.0.0.1' && host !== 'localhost' && host !== '::1') {
-      console.warn('⚠️  WARNING: Listening on a non-loopback interface without --api-key. The proxy is accessible to anyone on the network!');
+      console.warn(
+        '⚠️  WARNING: Listening on a non-loopback interface without --api-key. The proxy is accessible to anyone on the network!',
+      );
     }
 
     // Browser instance shared across requests
@@ -99,10 +116,16 @@ export default defineCommand({
         // API key authentication
         if (apiKey) {
           const authHeader = req.headers['authorization'] || '';
-          const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+          const token = authHeader.startsWith('Bearer ')
+            ? authHeader.slice(7)
+            : '';
           if (token !== apiKey) {
             res.writeHead(403, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Forbidden. Invalid or missing API key.' }));
+            res.end(
+              JSON.stringify({
+                error: 'Forbidden. Invalid or missing API key.',
+              }),
+            );
             return;
           }
         }
@@ -112,7 +135,11 @@ export default defineCommand({
         // Only handle /v1 endpoint
         if (reqUrl.pathname !== '/v1') {
           res.writeHead(404, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Not found. Use /v1?session=<name>&url=<encoded_url>' }));
+          res.end(
+            JSON.stringify({
+              error: 'Not found. Use /v1?session=<name>&url=<encoded_url>',
+            }),
+          );
           return;
         }
 
@@ -121,7 +148,11 @@ export default defineCommand({
 
         if (!sessionName || !targetUrl) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Missing required query parameters: session, url' }));
+          res.end(
+            JSON.stringify({
+              error: 'Missing required query parameters: session, url',
+            }),
+          );
           return;
         }
 
@@ -143,16 +174,25 @@ export default defineCommand({
 
           // Forward Content-Disposition if present, otherwise synthesize one
           // for non-text responses to signal a file download.
-          if (!headers['content-disposition'] && !contentType.startsWith('text/')) {
+          if (
+            !headers['content-disposition'] &&
+            !contentType.startsWith('text/')
+          ) {
             const filename = filenameFromUrl(targetUrl);
-            headers['content-disposition'] = `attachment; filename="${filename}"`;
+            headers['content-disposition'] =
+              `attachment; filename="${filename}"`;
           }
 
           res.writeHead(upstreamRes.statusCode, headers);
           upstreamRes.pipe(res);
 
           // Persist any Set-Cookie headers back into the session file
-          await updateSessionCookies(state, sessionPath, upstreamRes, targetUrl);
+          await updateSessionCookies(
+            state,
+            sessionPath,
+            upstreamRes,
+            targetUrl,
+          );
 
           console.log(`✅ [${sessionName}] Streamed ${targetUrl}`);
           return;
@@ -166,12 +206,17 @@ export default defineCommand({
         const page = await context.newPage();
 
         try {
-          await page.goto(targetUrl, { waitUntil: 'networkidle', timeout: 60000 });
+          await page.goto(targetUrl, {
+            waitUntil: 'networkidle',
+            timeout: 60000,
+          });
           const body = await page.content();
 
           await persistContextSession(context, sessionPath);
 
-          res.writeHead(200, { 'Content-Type': contentType || 'text/html; charset=utf-8' });
+          res.writeHead(200, {
+            'Content-Type': contentType || 'text/html; charset=utf-8',
+          });
           res.end(body);
           console.log(`✅ [${sessionName}] Rendered ${targetUrl}`);
         } finally {
@@ -181,7 +226,9 @@ export default defineCommand({
         console.error('❌ Request failed:', err.message || err);
         if (!res.headersSent) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: err.message || 'Internal server error' }));
+          res.end(
+            JSON.stringify({ error: err.message || 'Internal server error' }),
+          );
         }
       } finally {
         trackRequestEnd();
@@ -190,8 +237,12 @@ export default defineCommand({
 
     server.listen(port, host, () => {
       const displayHost = host === '0.0.0.0' ? 'localhost' : host;
-      console.log(`🚀 Session proxy listening on http://${displayHost}:${port}`);
-      console.log(`   Example: curl "http://${displayHost}:${port}/v1?session=example&url=https%3A%2F%2Fexample.com"`);
+      console.log(
+        `🚀 Session proxy listening on http://${displayHost}:${port}`,
+      );
+      console.log(
+        `   Example: curl "http://${displayHost}:${port}/v1?session=example&url=https%3A%2F%2Fexample.com"`,
+      );
     });
 
     // Graceful shutdown
@@ -205,13 +256,21 @@ export default defineCommand({
 
       // Wait for in-flight requests to complete (with a timeout)
       if (activeRequests > 0) {
-        console.log(`⏳ Waiting for ${activeRequests} in-flight request(s) to complete...`);
+        console.log(
+          `⏳ Waiting for ${activeRequests} in-flight request(s) to complete...`,
+        );
         await Promise.race([
-          new Promise((resolve) => { onDrained = resolve; }),
-          new Promise((resolve) => setTimeout(() => {
-            console.warn(`⚠️  Timed out waiting for requests — forcing shutdown.`);
-            resolve();
-          }, 30000)),
+          new Promise((resolve) => {
+            onDrained = resolve;
+          }),
+          new Promise((resolve) =>
+            setTimeout(() => {
+              console.warn(
+                `⚠️  Timed out waiting for requests — forcing shutdown.`,
+              );
+              resolve();
+            }, 30000),
+          ),
         ]);
       }
 
@@ -222,7 +281,10 @@ export default defineCommand({
           console.log(`💾 Saved session: ${sessionPath}`);
           await context.close();
         } catch (err) {
-          console.error(`⚠️  Failed to save session ${sessionPath}:`, err.message || err);
+          console.error(
+            `⚠️  Failed to save session ${sessionPath}:`,
+            err.message || err,
+          );
         }
       }
       await browser.close();
@@ -255,21 +317,29 @@ function directFetch(url, cookieHeader, maxRedirects = 10) {
     const reqOpts = {
       method: 'GET',
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        'User-Agent':
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
         ...(cookieHeader ? { Cookie: cookieHeader } : {}),
       },
     };
 
     const req = mod.get(url, reqOpts, (res) => {
       // Follow redirects (3xx)
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+      if (
+        res.statusCode >= 300 &&
+        res.statusCode < 400 &&
+        res.headers.location
+      ) {
         res.destroy();
         if (maxRedirects <= 0) {
           reject(new Error(`Too many redirects (last URL: ${url})`));
           return;
         }
         const redirectUrl = new URL(res.headers.location, url).toString();
-        directFetch(redirectUrl, cookieHeader, maxRedirects - 1).then(resolve, reject);
+        directFetch(redirectUrl, cookieHeader, maxRedirects - 1).then(
+          resolve,
+          reject,
+        );
         return;
       }
       resolve(res);
@@ -292,6 +362,7 @@ function filenameFromUrl(url) {
     const pathname = decodeURIComponent(new URL(url).pathname);
     const base = pathname.split('/').pop() || 'download';
     // Strip control characters, quotes, backslashes, and semicolons
+    // eslint-disable-next-line no-control-regex
     const sanitized = base.replace(/[\x00-\x1f\x7f"\\;]/g, '_').trim();
     return sanitized || 'download';
   } catch {
@@ -308,7 +379,12 @@ function filenameFromUrl(url) {
  * @param {import('http').IncomingMessage} upstreamRes - The upstream HTTP response.
  * @param {string} targetUrl - The original target URL.
  */
-async function updateSessionCookies(state, sessionPath, upstreamRes, targetUrl) {
+async function updateSessionCookies(
+  state,
+  sessionPath,
+  upstreamRes,
+  targetUrl,
+) {
   const setCookieHeaders = upstreamRes.headers['set-cookie'];
   if (!setCookieHeaders || setCookieHeaders.length === 0) return;
 
@@ -345,7 +421,10 @@ async function updateSessionCookies(state, sessionPath, upstreamRes, targetUrl) 
 
     // Replace existing cookie with same name + domain, or append
     const idx = (state.cookies || []).findIndex(
-      (c) => c.name === cookie.name && c.domain === cookie.domain && c.path === cookie.path,
+      (c) =>
+        c.name === cookie.name &&
+        c.domain === cookie.domain &&
+        c.path === cookie.path,
     );
     if (!state.cookies) state.cookies = [];
     if (idx >= 0) {

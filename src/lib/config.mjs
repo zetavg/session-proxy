@@ -1,11 +1,13 @@
-import path from 'node:path';
 import os from 'node:os';
+import path from 'node:path';
 
 /**
  * Resolve XDG_STATE_HOME, defaulting to ~/.local/state.
  */
 function xdgStateHome() {
-  return process.env.XDG_STATE_HOME || path.join(os.homedir(), '.local', 'state');
+  return (
+    process.env.XDG_STATE_HOME || path.join(os.homedir(), '.local', 'state')
+  );
 }
 
 /**
@@ -75,7 +77,10 @@ export function resolveApiKey(cliValue) {
  */
 export function resolvePort(cliValue) {
   const raw = resolveParam({
-    cli: cliValue !== undefined && cliValue !== null ? String(cliValue) : undefined,
+    cli:
+      cliValue !== undefined && cliValue !== null
+        ? String(cliValue)
+        : undefined,
     env: 'SESSION_PROXY_PORT',
     fallback: '8020',
   });
