@@ -30,7 +30,7 @@ jobs:
       matrix:
         environment:
           - NPM
-          - GitHub Package
+          # - GitHub Package
     environment:
       name: ${{ matrix.environment }}
       url: ${{ vars.URL }}
