@@ -41,7 +41,7 @@
   "devDependencies": {
     "@zetavg/eslint-config": "^0.0.5-pre.4",
     "@zetavg/prettier-config": "^0.0.4",
-    "eslint": "^9.39.2",
+    "eslint": "^10.0.1",
     "prettier": "^3.8.1"
   }
 }
