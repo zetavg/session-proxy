@@ -3,6 +3,9 @@
   "version": "0.0.0",
   "type": "module",
   "description": "A local HTTP proxy that reuses browser session state for authenticated requests.",
+  "repository": {
+    "url": "https://github.com/zetavg/session-proxy"
+  },
   "bin": {
     "session-proxy": "./bin/session-proxy.mjs"
   },
